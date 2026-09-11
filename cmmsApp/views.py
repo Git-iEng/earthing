@@ -16,6 +16,11 @@ from django.conf import settings
 from pathlib import Path
 from datetime import datetime
 from threading import Thread
+# <!-- Updated by Diptee on 11-Sep-2026: START -->
+# Used by the OTP API wrapper so unexpected backend errors are returned as JSON
+# instead of Django's HTML 500 page.
+from functools import wraps
+# <!-- Updated by Diptee on 11-Sep-2026: END -->
 import os, re
 # CHANGE BY diptee - 10-Sep-2026: START - Imports required for Email OTP verification
 import secrets
@@ -338,25 +343,64 @@ def _send_contact_otp_email(
 # the mail server is slow to respond.
 # ============================================================
  
+# <!-- Updated by Diptee on 11-Sep-2026: START -->
 def _send_contact_otp_email_async(
     email: str,
     otp: str
 ) -> None:
- 
+
+    def _safe_send():
+        try:
+            _send_contact_otp_email(email, otp)
+        except Exception as exc:
+            print(
+                "OTP EMAIL ERROR: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
     Thread(
-        target=_send_contact_otp_email,
-        args=(
-            email,
-            otp
-        ),
+        target=_safe_send,
         daemon=True
     ).start()
- 
- 
+# <!-- Updated by Diptee on 11-Sep-2026: END -->
+
+
 # ============================================================
 # SEND OTP API
 # ============================================================
  
+# <!-- Updated by Diptee on 11-Sep-2026: START -->
+# Return JSON for unexpected OTP backend errors so JavaScript does not receive
+# Django's HTML 500 page and show "Invalid response from server".
+def _otp_json_response_on_error(view_func):
+    @wraps(view_func)
+    def wrapped(request, *args, **kwargs):
+        try:
+            return view_func(request, *args, **kwargs)
+        except Exception as exc:
+            error_text = f"{type(exc).__name__}: {exc}"
+            print(f"OTP API ERROR in {view_func.__name__}: {error_text}")
+
+            payload = {
+                "ok": False,
+                "message": (
+                    "The email verification service could not process your "
+                    "request. Please try again."
+                ),
+            }
+
+            if settings.DEBUG:
+                payload["debug"] = error_text
+
+            return JsonResponse(payload, status=500)
+
+    return wrapped
+# <!-- Updated by Diptee on 11-Sep-2026: END -->
+
+
+# <!-- Updated by Diptee on 11-Sep-2026: START -->
+@_otp_json_response_on_error
+# <!-- Updated by Diptee on 11-Sep-2026: END -->
 @require_POST
 def send_email_otp(
     request
@@ -540,6 +584,9 @@ def send_email_otp(
 # VERIFY OTP API
 # ============================================================
  
+# <!-- Updated by Diptee on 11-Sep-2026: START -->
+@_otp_json_response_on_error
+# <!-- Updated by Diptee on 11-Sep-2026: END -->
 @require_POST
 def verify_email_otp(
     request
